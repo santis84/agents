@@ -1,0 +1,5 @@
+langchain
+langchain-community
+langgraph
+litellm
+pydantic # Dependência de langchain para validação de dados
