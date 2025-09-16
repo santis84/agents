@@ -6,13 +6,13 @@ from typing import TypedDict, Annotated, List, Union
 # pip install langchain langchain_community langchain_openai litellm langgraph
 
 from langchain_community.tools import tool
-from langchain_core.agents import AgentExecutor
+from langgraph.graph import StateGraph, END
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langgraph.graph import StateGraph, END
-from langgraph.graph.graph import CompiledGraph
-from langchain_community.chat_models import ChatLiteLLM
+from langgraph.graph.state import CompiledStateGraph
+from langchain_litellm import ChatLiteLLM
 
 # -----------------------------------------------------------
 # 1. Definição das Ferramentas (Tools)
@@ -64,7 +64,7 @@ class BaseAgent:
         self.name = name
         self.system_prompt = system_prompt
         # Configurando o LiteLLM
-        self.llm = ChatLiteLLM(model="ollama/llama3") # Use o modelo de sua preferência (ex: "gpt-4", "gemini-pro", etc.)
+        self.llm = ChatLiteLLM(model="gpt-3.5-turbo") # Use o modelo de sua preferência (ex: "gpt-4", "gemini-pro", etc.)
         self.tools = tools
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", self.system_prompt),
@@ -112,7 +112,9 @@ class PesquisadorAgent(BaseAgent):
         system_prompt = "Você é um agente especialista em pesquisa. Sua função é buscar informações e consolidá-las."
         tools = [ler_arquivo] # Exemplo de ferramenta
         super().__init__("Pesquisador", system_prompt, tools)
-        self.agent_executor = AgentExecutor(agent=self.agent_runnable, tools=self.tools)
+        # Adaptação: Armazena o agent_runnable e tools para uso com langgraph
+        self.agent_runnable = self.create_runnable()
+        self.tools = [ler_arquivo]
 
 # Agente Analista de Dados
 class AnalistaDadosAgent(BaseAgent):
@@ -120,13 +122,15 @@ class AnalistaDadosAgent(BaseAgent):
         system_prompt = "Você é um agente especialista em análise de dados. Sua função é processar e extrair insights."
         tools = [ler_arquivo, escrever_arquivo, ferramenta_analise_dados] # Exemplo de ferramentas
         super().__init__("Analista de Dados", system_prompt, tools)
-        self.agent_executor = AgentExecutor(agent=self.agent_runnable, tools=self.tools)
+        # Adaptação: Armazena o agent_runnable e tools para uso com langgraph
+        self.agent_runnable = self.create_runnable()
+        self.tools = [ferramenta_analise_dados]
 
 # -----------------------------------------------------------
 # 4. Construção e Compilação do Grafo
 # -----------------------------------------------------------
 
-def build_graph() -> CompiledGraph:
+def build_graph() -> CompiledStateGraph:
     # Instanciando os agentes
     orchestrator = OrchestratorAgent(
         system_prompt="Você é um orquestrador de um time de IA. Sua única função é receber a solicitação do usuário e encaminhá-la para o agente especialista correto. Se a tarefa não se encaixa em nenhum especialista, finalize o processo. A sua resposta deve ser o nome do agente especializado a ser usado.",
@@ -140,8 +144,8 @@ def build_graph() -> CompiledGraph:
 
     # Adicionando os nós (agentes)
     workflow.add_node("orquestrador", lambda state: {"messages": [AIMessage(content=orchestrator.decide_next_agent(state))]})
-    workflow.add_node("pesquisador", lambda state: {"messages": [pesquisador.agent_executor.invoke(state)]})
-    workflow.add_node("analista_dados", lambda state: {"messages": [analista_dados.agent_executor.invoke(state)]})
+    workflow.add_node("pesquisador", lambda state: {"messages": [pesquisador.agent_runnable.invoke(state)]})
+    workflow.add_node("analista_dados", lambda state: {"messages": [analista_dados.agent_runnable.invoke(state)]})
 
     # Definindo o ponto de entrada
     workflow.set_entry_point("orquestrador")
